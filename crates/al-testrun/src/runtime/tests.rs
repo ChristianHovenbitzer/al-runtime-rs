@@ -1508,6 +1508,28 @@ fn retire_drops_the_value_on_another_thread() {
     assert_ne!(dropped_on, std::thread::current().id());
 }
 
+#[test]
+fn retiring_derefs_to_the_value_and_drops_it_on_another_thread_when_it_goes() {
+    struct Marker {
+        value: u32,
+        tx: std::sync::mpsc::Sender<std::thread::ThreadId>,
+    }
+    impl Drop for Marker {
+        fn drop(&mut self) {
+            let _ = self.tx.send(std::thread::current().id());
+        }
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let held = super::Retiring::new(Marker { value: 7, tx });
+    assert_eq!(held.value, 7, "the value is usable through the wrapper");
+    assert!(rx.try_recv().is_err(), "not dropped while held");
+    drop(held);
+    let dropped_on = rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the value is dropped");
+    assert_ne!(dropped_on, std::thread::current().id());
+}
+
 /// A test that never ends is stopped at its time limit and reported as not run, with the limit
 /// in the reason. The tests after it still run; a failure after it is not trusted, because the
 /// stopped test left the codeunit's state half way.

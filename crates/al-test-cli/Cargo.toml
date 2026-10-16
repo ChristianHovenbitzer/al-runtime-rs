@@ -12,9 +12,11 @@ rust-version.workspace = true
 # times faster than the unoptimised one; the CI workflow explains the split, and check.sh splits
 # the tests the same way. Never turn it off
 # to skip a failing test.
-default = ["cli-e2e"]
+default = ["cli-e2e", "mimalloc"]
 cli-e2e = []
-# Links mimalloc as the global allocator (ADR-016: musl's allocator is slow).
+# Links mimalloc as the global allocator (ADR-016: musl's allocator is slow). On by default: with
+# glibc malloc a full corpus run made about 200,000 mprotect calls (per-thread arena growth) and spent a
+# quarter of its CPU time in the kernel; with mimalloc the run is about a fifth faster.
 mimalloc = ["dep:mimalloc"]
 
 [[test]]
@@ -37,6 +39,7 @@ al-version.workspace = true
 al-host.workspace = true
 al-testrun.workspace = true
 quick-xml.workspace = true
+rayon = "1"
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true

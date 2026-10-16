@@ -109,12 +109,32 @@ pub fn runtime_build() -> [u8; 32] {
     *HASH.get_or_init(|| {
         let bytes = std::env::current_exe().and_then(std::fs::read);
         match bytes {
-            Ok(b) => Sha256::digest(&b).into(),
+            Ok(b) => hash_build_bytes(&b),
             // Without the executable the key cannot say which compiler made an entry: a hash of
             // the time would only ever miss. Use a value no file can match.
             Err(e) => Sha256::digest(format!("no executable: {e}").as_bytes()).into(),
         }
     })
+}
+
+/// The chunk size of [`hash_build_bytes`].
+pub const BUILD_HASH_CHUNK: usize = 1 << 20;
+
+/// A hash of the bytes of an executable: SHA-256 over the length and the SHA-256 of each chunk, in
+/// order. The chunks are hashed in parallel (one SHA-256 over the whole executable runs on a single core while the
+/// others wait). It only has to change with every byte, the length and the
+/// chunk order; it is a cache key, not a published digest.
+pub fn hash_build_bytes(bytes: &[u8]) -> [u8; 32] {
+    let per_chunk: Vec<[u8; 32]> = bytes
+        .par_chunks(BUILD_HASH_CHUNK)
+        .map(|c| Sha256::digest(c).into())
+        .collect();
+    let mut h = Sha256::new();
+    h.update((bytes.len() as u64).to_le_bytes());
+    for c in &per_chunk {
+        h.update(c);
+    }
+    h.finalize().into()
 }
 
 /// A hash of the source of an app: every path and every byte.

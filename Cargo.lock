@@ -155,6 +155,7 @@ dependencies = [
  "libc",
  "mimalloc",
  "quick-xml",
+ "rayon",
  "serde",
  "serde_json",
  "tempfile",

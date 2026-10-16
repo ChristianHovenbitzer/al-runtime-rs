@@ -7,6 +7,7 @@ pub mod stream;
 pub mod text;
 pub mod textfns;
 pub mod value;
+pub mod value_codec;
 pub mod version;
 pub mod wsac;
 pub mod xml;

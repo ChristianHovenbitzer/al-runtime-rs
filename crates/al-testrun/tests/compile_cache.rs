@@ -797,3 +797,30 @@ fn a_dependency_is_compiled_with_the_symbols_of_its_own_app_json() {
     let other = symbol_run(&[], &[], cache(dir.path(), false)).unwrap();
     assert!(outcomes(&other).iter().all(|l| l.contains("Pass")));
 }
+
+/// The hash of the running executable is computed in parallel chunks;
+/// it must still depend on every byte and on the length.
+#[test]
+fn build_hash_of_bytes_depends_on_every_byte_and_the_length() {
+    use al_testrun::compile_cache::hash_build_bytes;
+    let chunk = al_testrun::compile_cache::BUILD_HASH_CHUNK;
+    let base: Vec<u8> = (0..chunk * 3 + 17).map(|i| (i % 251) as u8).collect();
+    let h = hash_build_bytes(&base);
+    assert_eq!(h, hash_build_bytes(&base.clone()), "deterministic");
+    for pos in [0, chunk - 1, chunk, chunk * 2 + 5, base.len() - 1] {
+        let mut b = base.clone();
+        b[pos] ^= 1;
+        assert_ne!(h, hash_build_bytes(&b), "byte {pos} is part of the hash");
+    }
+    assert_ne!(
+        h,
+        hash_build_bytes(&base[..base.len() - 1]),
+        "length is part of the hash"
+    );
+    // Two chunks swapped is a different file.
+    let mut swapped = base.clone();
+    let (a, rest) = swapped.split_at_mut(chunk);
+    a.swap_with_slice(&mut rest[..chunk]);
+    assert_ne!(h, hash_build_bytes(&swapped), "chunk order is part of the hash");
+    assert_ne!(hash_build_bytes(&[]), hash_build_bytes(&[0]));
+}

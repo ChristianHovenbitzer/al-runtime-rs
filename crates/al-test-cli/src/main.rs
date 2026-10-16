@@ -578,6 +578,8 @@ fn run_version(
         &runs,
         &opts,
     )?;
+    // Nothing waits for the drop of the runtime after the report is written.
+    let rt = runtime::Retiring::new(rt);
     if args.dual_run {
         for d in rt.dual_diffs() {
             println!("{d}");

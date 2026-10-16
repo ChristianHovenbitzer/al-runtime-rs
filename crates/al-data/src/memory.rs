@@ -150,6 +150,15 @@ pub struct MemStore {
     restored_log: Option<std::rc::Rc<std::cell::RefCell<Vec<RestoredChange>>>>,
 }
 
+/// One table of an exported store ([`MemStore::export_committed`]): its company (empty for a table that is not per
+/// company), its object, and its rows with their primary keys, in key order.
+#[derive(Debug, Clone)]
+pub struct ExportedTable {
+    pub company: String,
+    pub object: u32,
+    pub rows: Vec<(Vec<Value>, Row)>,
+}
+
 /// A change to a row the restored company holds, made while recording was on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestoredChange {
@@ -498,6 +507,44 @@ impl MemStore {
     }
 
     /// The table objects that hold a committed row in any company.
+    /// The committed rows of every table the store holds an entry for, for a snapshot on disk or for
+    /// another thread (the rows are plain values; [`MemStore::from_exported`] is the way back). `None` when the
+    /// store reads rows from a backing (test data) or records changes to them: those are not in the store.
+    /// Changes that are not committed are not exported.
+    pub fn export_committed(&self) -> Option<Vec<ExportedTable>> {
+        if self.backing.is_some() || self.restored_log.is_some() {
+            return None;
+        }
+        Some(
+            self.committed
+                .iter()
+                .map(|((company, object), table)| ExportedTable {
+                    company: company.to_string(),
+                    object: *object,
+                    rows: table.iter().map(|(k, r)| (k.0.clone(), r.clone())).collect(),
+                })
+                .collect(),
+        )
+    }
+
+    /// A store whose committed (and current) data is `tables`, with no provider and no backing. Its stamps are new
+    /// ones: a stamp only says whether a table changed, and no cache of this store knows an older one.
+    pub fn from_exported(tables: Vec<ExportedTable>) -> MemStore {
+        let mut s = MemStore::default();
+        for t in tables {
+            let slot: Slot = (std::sync::Arc::from(t.company.as_str()), t.object);
+            let table: Table = t.rows.into_iter().map(|(k, r)| (Key(k), r)).collect();
+            s.counter += 1;
+            s.versions.insert(slot.clone(), s.counter);
+            s.shapes.insert(slot.clone(), s.counter);
+            s.tables.insert(slot, table);
+        }
+        s.committed = s.tables.clone();
+        s.committed_versions = s.versions.clone();
+        s.committed_shapes = s.shapes.clone();
+        s
+    }
+
     pub fn nonempty_tables(&self) -> std::collections::BTreeSet<u32> {
         self.committed
             .iter()
@@ -1751,6 +1798,98 @@ mod tests {
     #[test]
     fn passes_the_snapshot_contract() {
         crate::contract::snapshot_restores_everything(MemStore::default());
+    }
+
+    // ---- export and import of the committed rows (the install baseline's snapshot on disk) ----
+
+    #[test]
+    fn exported_rows_import_into_a_store_that_reads_and_writes_like_the_original() {
+        let t = seek_table(vec![vec![0, 1], vec![3, 0, 1]]);
+        let mut s = MemStore::default();
+        for a in 0..70 {
+            s.insert(
+                &cx(),
+                &t,
+                vec![
+                    Value::Integer(a),
+                    Value::Integer(a % 3),
+                    Value::Code("X".into()),
+                    Value::Integer(a % 5),
+                ],
+            )
+            .unwrap();
+        }
+        s.commit();
+        // A change that is not committed is not part of the export.
+        s.insert(
+            &cx(),
+            &t,
+            vec![
+                Value::Integer(999),
+                Value::Integer(0),
+                Value::Code("X".into()),
+                Value::Integer(0),
+            ],
+        )
+        .unwrap();
+        let exported = s.export_committed().expect("nothing backs this store");
+        assert_eq!(exported.len(), 1);
+        assert_eq!(
+            (exported[0].company.as_str(), exported[0].object, exported[0].rows.len()),
+            ("C", 9, 70)
+        );
+        let mut back = MemStore::from_exported(exported);
+        s.rollback();
+        for key in 0..2 {
+            assert_eq!(
+                format!("{:?}", scan_all(&back, &t, key, &[], true)),
+                format!("{:?}", scan_all(&s, &t, key, &[], true))
+            );
+        }
+        assert_eq!(back.count(&cx(), &t, &[]).unwrap(), 70);
+        // It is a store like any other: a write is seen, a rollback takes it away, a commit keeps it.
+        back.insert(
+            &cx(),
+            &t,
+            vec![
+                Value::Integer(500),
+                Value::Integer(0),
+                Value::Code("X".into()),
+                Value::Integer(0),
+            ],
+        )
+        .unwrap();
+        assert_eq!(back.count(&cx(), &t, &[]).unwrap(), 71);
+        back.rollback();
+        assert_eq!(back.count(&cx(), &t, &[]).unwrap(), 70);
+        let before = back.table_stamp(&cx(), &t);
+        back.insert(
+            &cx(),
+            &t,
+            vec![
+                Value::Integer(501),
+                Value::Integer(0),
+                Value::Code("X".into()),
+                Value::Integer(0),
+            ],
+        )
+        .unwrap();
+        assert_ne!(back.table_stamp(&cx(), &t), before, "a write changes the table's stamp");
+    }
+
+    #[test]
+    fn a_store_with_a_backing_has_no_export() {
+        struct B;
+        impl Backing for B {
+            fn company(&self) -> &str {
+                "C"
+            }
+            fn rows(&self, _: &str, _: u32) -> Option<Rows> {
+                None
+            }
+        }
+        let s = MemStore::default().with_backing(std::rc::Rc::new(B));
+        assert!(s.export_committed().is_none());
     }
 }
 

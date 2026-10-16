@@ -60,6 +60,25 @@ pub fn set_environment(environment: al_host::Environment) {
     let _ = ENVIRONMENT.set(environment);
 }
 
+/// The environment of the system host, as text (a key of the install baseline on disk holds it).
+pub fn environment_text() -> &'static str {
+    match ENVIRONMENT.get().copied().unwrap_or_default() {
+        al_host::Environment::Saas => "saas",
+        al_host::Environment::OnPrem => "onprem",
+    }
+}
+
+/// Whether `--files-dir` gave the `File` type a real directory: what a run reads from there is not part of any key.
+pub fn uses_real_files() -> bool {
+    FILES_DIR.get().is_some()
+}
+
+/// Whether the system host reads the wall clock as it goes (`ALRUNNER_REAL_CLOCK`) instead of standing at the instant
+/// the run began.
+pub fn real_clock() -> bool {
+    std::env::var_os("ALRUNNER_REAL_CLOCK").is_some()
+}
+
 /// The real clock and AL Runner's identity, on the file system the command line chose: memory,
 /// unless `--files-dir` named a directory, on the environment `--environment` named.
 pub fn system_host() -> Host {

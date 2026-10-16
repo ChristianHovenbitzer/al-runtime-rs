@@ -577,6 +577,31 @@ pub fn retire<T: Send + 'static>(value: T) {
     std::thread::spawn(move || drop(value));
 }
 
+/// Holds `value` and [`retire`]s it when it goes out of scope, so the end of a function that
+/// holds a big runtime does not wait for the drop.
+pub struct Retiring<T: Send + 'static>(Option<T>);
+
+impl<T: Send + 'static> Retiring<T> {
+    pub fn new(value: T) -> Self {
+        Retiring(Some(value))
+    }
+}
+
+impl<T: Send + 'static> std::ops::Deref for Retiring<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        self.0.as_ref().expect("held until dropped")
+    }
+}
+
+impl<T: Send + 'static> Drop for Retiring<T> {
+    fn drop(&mut self) {
+        if let Some(v) = self.0.take() {
+            retire(v);
+        }
+    }
+}
+
 mod blocked;
 mod cache;
 mod compiled;
